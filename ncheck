@@ -1,0 +1,12 @@
+#!/usr/bin/env zsh
+
+KEY=`cat ~/.config/ncheck.key`
+LIMIT=5000                      # Количество бесплатных обращений к API в месяц
+
+for FILENAME in `find /home/blackfire -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
+  
+curl --request POST --url https://nsfw-image-classification1.p.rapidapi.com/img/nsfw \
+--header 'X-RapidAPI-Host: nsfw-image-classification1.p.rapidapi.com' \
+--header 'X-RapidAPI-Key: $KEY' \
+--header 'content-type: multipart/form-data' \
+--form image=/home/blackfire/steamgirl-octokuro-russian-steam_001.jpeg
