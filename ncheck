@@ -1,12 +1,76 @@
 #!/usr/bin/env zsh
 
 KEY=`cat ~/.config/ncheck.key`
-LIMIT=5000                      # Количество бесплатных обращений к API в месяц
+# LIMIT=5000                      # Количество бесплатных обращений к API в месяц
+DESTDIR=/home/blackfire/scripts/test_files/destination
+INVERT=false
+VERBOSE=false
 
-for FILENAME in `find /home/blackfire -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
+usage() {
+    echo "Usage:"
+    echo "  ncheck [-c DESTINATION ] [-i ] [ -k ] [ -l ] [ -m DESTINATION ] [ -p ] [-r ] [ -v ] [ DIRECTORY ] "
+    echo "Description:"
+    echo "No arguments : Just print filenames, like 'ls' does, but the utility will only show names of files with NSFW content"
+    echo "If DIRECTORY is given, then perform check in it."    
+    echo "-c DESTINATION : Copy files into DESTINATION. Incompatible with -r and -m."
+    echo "-i : Invert the results. Show files without NSFW content."    
+    echo "-k :  Reserved"
+    echo "-l : Long, informative output. Print "score" of the content."
+    echo "-m DESTINATION : Move files into the DESTINATION directory"
+    echo "-p : Permissive mode. Allow 16+ erotic content. Use with caution."
+    echo "-r : Remove files. No additional confirmations will be asked. Use with caution. Incompatible with -m and -c."
+    echo "-u : Print this text, then exit"
+    echo "-v : Print version and exit"
+    exit -1
+}
+
+version() {
+  echo "nCheck v. 0.1"
+  exit -1
+}
+
+# Get the options when the script is executed
+while getopts c:i:k:l:m:p:r:u:v option # здесь дополнительно проверить что будет если буквы будут не все
+do
+   case "${option}"  in  
+                c) DESTDIR=${OPTARG};;
+                i) INVERT=true ;;
+                k) ;;
+                l) VERBOSE=true;;
+                m) DESTDIR=${OPTARG};;
+                p) usage ;;
+                r) ;;
+                u) usage ;;
+                v) version ;;
+                ?) usage ;;
+   esac
+ #  echo "установлены следующие опции" $option
+  # echo $OPTARG 
+done
+
+#echo $DESTDIR
+
+print() {
+for FILENAME in `find $PWD/test_files/source -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
   
-curl --request POST --url https://nsfw-image-classification1.p.rapidapi.com/img/nsfw \
---header 'X-RapidAPI-Host: nsfw-image-classification1.p.rapidapi.com' \
---header 'X-RapidAPI-Key: $KEY' \
---header 'content-type: multipart/form-data' \
---form image=/home/blackfire/steamgirl-octokuro-russian-steam_001.jpeg
+  CURRENT_RESULT=`curl -s --request POST --url https://nsfw-images-detection-and-classification.p.rapidapi.com/adult-content-file \
+    --header "X-RapidAPI-Host: nsfw-images-detection-and-classification.p.rapidapi.com"  \
+    --header "X-RapidAPI-Key: $KEY" \
+    -F "image=@$FILENAME"`
+  
+  FACTOR=`echo $CURRENT_RESULT | jq '.unsafe'`
+  SCORE=`echo $CURRENT_RESULT | jq '.objects[0].score'`
+  
+# Просто выводим список файлов
+if [[ $FACTOR == 'true' ]] ; then
+  if [[ $VERBOSE == 'true' ]] ; then
+    echo $FILENAME $SCORE
+  else
+    echo $FILENAME
+  fi
+fi
+
+done
+}
+
+print
