@@ -15,26 +15,34 @@ DESTDIR=''
 INVERT=false
 VERBOSE=false
 PERMISSIVE=false
-C_IS_SET=false # Приходится инициализировать их, даже если не нужны
-M_IS_SET=false # Иначе условный оператор далее не работает
+# RECURSE=-maxdepth\ 0
+
+# Эти переменные тоже приходится инициализировать, даже если они так и не будут
+# использованы, потому что ниже будет проверка логических условий с ними
+C_IS_SET=false
+M_IS_SET=false
 R_IS_SET=false
 
 # Краткая подсказка по опциям
 usage() {
     echo "Usage:"
-    echo "  ncheck [-c DESTINATION ] [-i ] [ -k ] [ -l ] [ -m DESTINATION ] [ -p ] [-r ] [ -v ] [ DIRECTORY ] "
+    echo "  ncheck [ { -c | -m } DESTINATION ] [ -i ] [ -k ] [ -l ] [ -p ] [ -R ] [ -v ] [ DIRECTORY ]\n"
     echo "Description:"
     echo "No arguments : Just print filenames, like 'ls' does, but the utility will only show names of files with NSFW content"
     echo "If DIRECTORY is given, then perform check in it."    
-    echo "-c DESTINATION : Copy files into DESTINATION. Incompatible with -r and -m."
+    echo "-c DESTINATION : Copy files into DESTINATION. Incompatible with -R and -m."
     echo "-i : Invert the results. Show files without NSFW content."    
-    echo "-k :  Reserved"
+    echo "-k : Reserved"
     echo "-l : Long, informative output. Print "score" of the content."
     echo "-m DESTINATION : Move files into the DESTINATION directory"
     echo "-p : Permissive mode. Allow 16+ erotic content. Use with caution."
-    echo "-r : Remove files. No additional confirmations will be asked. Use with caution. Incompatible with -m and -c."
-    echo "-u : Print this text, then exit"
-    echo "-v : Print version and exit"
+    echo "-R : Remove files. No additional confirmations will be asked. Use with caution. Incompatible with -m and -c."
+    echo "-r : Scan recursively. By default the utility only perform checks in current directory"
+    echo "-u or -h : Print this text, then exit"
+    echo "-v : Print version and exit" 
+    echo "Examples:\n"
+    echo ""
+    echo "ncheck"
     exit -1
 }
 
@@ -46,23 +54,25 @@ version() {
 # Решил пренебречь наличием длинных опций типа --copy-to в пользу упрощения скрипта.
 # Испольную встроенную команду getopts вместо внешней утилиты GNU getopt
 
-while getopts c:iklm:pruv option
+while getopts c:ihklm:pRruv option
 do
    case "${option}"  in  
                 c) DESTDIR=${OPTARG} && C_IS_SET=true ;;
-                i) INVERT=true && echo "Notice: option -i is under development now" ;;
+                h) usage ;;
+                i) INVERT=true ;;
                 k) echo "Notice: option -k is under development now" ;;
                 l) VERBOSE=true;;
                 m) DESTDIR=${OPTARG} && M_IS_SET=true ;;
                 p) PERMISSIVE=true;;
-                r) echo "Notice: option -r is under development now" ;;
+                R) echo "Notice: option -R is under development now" ;;
+#                r) RECURSE='' ;;
                 u) usage ;;
                 v) version ;;
-                ?) echo "Invalid option: -$OPTARG" >&2 ;;
+                *) echo "Invalid option: $option" >&2 && exit 1 ;;
    esac
 done
 
-# Парочка проверок на совместимость опций
+# Теперь нужно провести еще 4 проверки. Сначала на совместимость опций
 if [ $C_IS_SET = true ] && [ $M_IS_SET = true ] ; then
   echo "-c and -m options cannot be used at the same time! Exiting."
   exit 1
@@ -73,34 +83,43 @@ if [ $C_IS_SET = true ] && [ $R_IS_SET = true ] ; then
   exit 1
 fi
 
-# Два условия, которые нужны для обработки имени директории, где будет прозводиться поиск файлов
-# Если последний аргумент - директория, то если при этом не включены опции -m и -c, то это директория для поиска
+# А эти два условия нужны для того, чтобы нормально обрабатывать синтаксис вида ncheck /target/dir
+# ncheck -c /copy_to_dir /scandir, то-есть, чтобы целевую директорию можно было по-прежнему указывать
+# без дополнительного параметра, и скрипт не путал её с аргументами к -c и -m
 if [ -d $argv[-1] ] && ! ( [ $C_IS_SET = true ] || [ $M_IS_SET = true ] ) ; then WORKDIR=$argv[-1] ; fi
 # Возможен случай, когда включено -m или -c, но тогда предпоследним аргументом тоже должна быть директория
 if [ -d $argv[-1] ] && ( [ $C_IS_SET = true ] || [ $M_IS_SET = true ] ) && [ -d $argv[-2] ] ; then WORKDIR=$argv[-1] ; fi
-# Всё это нужно для синтаксиса типа ncheck -c /dir /searchdir
 
 print() {
-for FILENAME in `find $WORKDIR -maxdepth 1 -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
+  for FILENAME in `find $WORKDIR -maxdepth 1 -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
+    
+    # Получаем JSON от сервиса
+    CURRENT_RESULT=`curl -s --request POST --url https://nsfw-images-detection-and-classification.p.rapidapi.com/adult-content-file \
+      --header "X-RapidAPI-Host: nsfw-images-detection-and-classification.p.rapidapi.com"  \
+      --header "X-RapidAPI-Key: $KEY" \
+      -F "image=@$FILENAME"`
+    
+    # Забираем из него нужные данные
+    FACTOR=`echo $CURRENT_RESULT | jq '.unsafe'`
+    SCORE=`echo $CURRENT_RESULT | jq '.objects[0].score'`
 
-  CURRENT_RESULT=`curl -s --request POST --url https://nsfw-images-detection-and-classification.p.rapidapi.com/adult-content-file \
-    --header "X-RapidAPI-Host: nsfw-images-detection-and-classification.p.rapidapi.com"  \
-    --header "X-RapidAPI-Key: $KEY" \
-    -F "image=@$FILENAME"`
-  
-  FACTOR=`echo $CURRENT_RESULT | jq '.unsafe'`
-  SCORE=`echo $CURRENT_RESULT | jq '.objects[0].score'`
-  
-# Просто выводим список файлов
-if [[ $FACTOR == 'true' ]] ; then
-  if [[ $VERBOSE == 'true' ]] ; then
-    echo $FILENAME $SCORE
-  else
-    echo $FILENAME
-  fi
-fi
-
-done
+    # Вывод файлов в обычном режиме
+    if [ $FACTOR = true ] && [ $INVERT = false ] ; then
+      if [ $VERBOSE = true ] ; then
+        echo `realpath $FILENAME` $SCORE # -l задана, поэтому добираем имя файла до полного
+      else
+        echo $FILENAME | awk -F '/' '{print $NF}' # -l не задана, значит, наоборот, выводим имя файла без пути
+      fi
+    # Вывод файлов в инвертированном режиме
+    elif [ $FACTOR = false ] && [ $INVERT = true ] ; then
+      if [ $VERBOSE = true ] ; then
+        echo `realpath $FILENAME` "0.00"
+      else
+        echo $FILENAME | awk -F '/' '{print $NF}'
+      fi
+    fi
+  done
 }
 
+# Ради чего всё затевалось
 print
