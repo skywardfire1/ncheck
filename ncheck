@@ -1,11 +1,25 @@
 #!/usr/bin/env zsh
 
+####################################################################################
+###                                                                              ###
+###                          NSFV check utility                                  ###
+###                                                                              ###
+###                             just for fun                                     ###
+###                                                                              ###
+####################################################################################
+
+# Инициализируем переменные
 KEY=`cat ~/.config/ncheck.key`
-# LIMIT=5000                      # Количество бесплатных обращений к API в месяц
-DESTDIR=/home/blackfire/scripts/test_files/destination
+WORKDIR=$PWD
+DESTDIR=''
 INVERT=false
 VERBOSE=false
+PERMISSIVE=false
+C_IS_SET=false # Приходится инициализировать их, даже если не нужны
+M_IS_SET=false # Иначе условный оператор далее не работает
+R_IS_SET=false
 
+# Краткая подсказка по опциям
 usage() {
     echo "Usage:"
     echo "  ncheck [-c DESTINATION ] [-i ] [ -k ] [ -l ] [ -m DESTINATION ] [ -p ] [-r ] [ -v ] [ DIRECTORY ] "
@@ -29,30 +43,46 @@ version() {
   exit -1
 }
 
-# Get the options when the script is executed
-while getopts c:i:k:l:m:p:r:u:v option # здесь дополнительно проверить что будет если буквы будут не все
+# Решил пренебречь наличием длинных опций типа --copy-to в пользу упрощения скрипта.
+# Испольную встроенную команду getopts вместо внешней утилиты GNU getopt
+
+while getopts c:iklm:pruv option
 do
    case "${option}"  in  
-                c) DESTDIR=${OPTARG};;
-                i) INVERT=true ;;
-                k) ;;
+                c) DESTDIR=${OPTARG} && C_IS_SET=true ;;
+                i) INVERT=true && echo "Notice: option -i is under development now" ;;
+                k) echo "Notice: option -k is under development now" ;;
                 l) VERBOSE=true;;
-                m) DESTDIR=${OPTARG};;
-                p) usage ;;
-                r) ;;
+                m) DESTDIR=${OPTARG} && M_IS_SET=true ;;
+                p) PERMISSIVE=true;;
+                r) echo "Notice: option -r is under development now" ;;
                 u) usage ;;
                 v) version ;;
-                ?) usage ;;
+                ?) echo "Invalid option: -$OPTARG" >&2 ;;
    esac
- #  echo "установлены следующие опции" $option
-  # echo $OPTARG 
 done
 
-#echo $DESTDIR
+# Парочка проверок на совместимость опций
+if [ $C_IS_SET = true ] && [ $M_IS_SET = true ] ; then
+  echo "-c and -m options cannot be used at the same time! Exiting."
+  exit 1
+fi
+
+if [ $C_IS_SET = true ] && [ $R_IS_SET = true ] ; then
+  echo "-c and -r options cannot be used at the same time! Exiting."
+  exit 1
+fi
+
+# Два условия, которые нужны для обработки имени директории, где будет прозводиться поиск файлов
+# Если последний аргумент - директория, то если при этом не включены опции -m и -c, то это директория для поиска
+if [ -d $argv[-1] ] && ! ( [ $C_IS_SET = true ] || [ $M_IS_SET = true ] ) ; then WORKDIR=$argv[-1] ; fi
+# Возможен случай, когда включено -m или -c, но тогда предпоследним аргументом тоже должна быть директория
+if [ -d $argv[-1] ] && ( [ $C_IS_SET = true ] || [ $M_IS_SET = true ] ) && [ -d $argv[-2] ] ; then WORKDIR=$argv[-1] ; fi
+# Всё это нужно для синтаксиса типа ncheck -c /dir /searchdir
 
 print() {
-for FILENAME in `find $PWD/test_files/source -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
-  
+for FILENAME in `find $WORKDIR -maxdepth 1 -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
+
   CURRENT_RESULT=`curl -s --request POST --url https://nsfw-images-detection-and-classification.p.rapidapi.com/adult-content-file \
     --header "X-RapidAPI-Host: nsfw-images-detection-and-classification.p.rapidapi.com"  \
     --header "X-RapidAPI-Key: $KEY" \
