@@ -108,14 +108,14 @@ print() {
       if [ $VERBOSE = true ] ; then
         echo `realpath $FILENAME` $SCORE # -l задана, поэтому добираем имя файла до полного
       else
-        echo $FILENAME | awk -F '/' '{print $NF}' # -l не задана, значит, наоборот, выводим имя файла без пути
+        echo ${FILENAME##*/} # -l не задана, значит, наоборот, выводим имя файла без пути
       fi
     # Вывод файлов в инвертированном режиме
     elif [ $FACTOR = false ] && [ $INVERT = true ] ; then
       if [ $VERBOSE = true ] ; then
         echo `realpath $FILENAME` "0.00"
       else
-        echo $FILENAME | awk -F '/' '{print $NF}'
+        echo ${FILENAME##*/}
       fi
     fi
   done
