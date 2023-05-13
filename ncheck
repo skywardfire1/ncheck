@@ -8,38 +8,94 @@
 ###                                                                              ###
 ####################################################################################
 
-# Инициализируем переменные
+# --------------------------------- ПЕРЕМЕННЫЕ -------------------------------------
 KEY=`cat ~/.config/ncheck.key`
 WORKDIR=$PWD
-DESTDIR=''
 INVERT=false
 VERBOSE=false
 PERMISSIVE=false
-# RECURSE=-maxdepth\ 0
+VERBOSE=":"
+LONG=false
+ACTION=print
 
-# Эти переменные тоже приходится инициализировать, даже если они так и не будут
-# использованы, потому что ниже будет проверка логических условий с ними
-C_IS_SET=false
-M_IS_SET=false
-R_IS_SET=false
+declare FACTOR # Приходится делать это здесь чтобы потом не декларировать их
+declare SCORE  # по 10 раз в цикле. Кроме того, они должны быть глобальными
 
-# Краткая подсказка по опциям
-usage() {
+# ---------------------------------- ФУНКЦИИ ----------------------------------------
+
+function scan {
+#  echo we see $FILENAME in scan function
+#  echo got $1 from print() function
+  # Получаем JSON от сервиса
+  CURRENT_RESULT=`curl -s --request POST --url https://nsfw-images-detection-and-classification.p.rapidapi.com/adult-content-file \
+    --header "X-RapidAPI-Host: nsfw-images-detection-and-classification.p.rapidapi.com"  \
+    --header "X-RapidAPI-Key: $KEY" \
+    -F "image=@$FILENAME"`
+
+#  echo $CURRENT_RESILT
+
+  # Забираем из него нужные данные
+  FACTOR=`echo $CURRENT_RESULT | jq '.unsafe'`
+  SCORE=`echo $CURRENT_RESULT | jq '.objects[0].score'`
+  
+#  echo FACTOR $FACTOR SCORE $SCORE
+}
+
+function copy {
+  for FILENAME in `find $WORKDIR -maxdepth 1 -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
+    scan $FILENAME
+    if [ $FACTOR = true ] && [ $INVERT = false ] ; then cp $FILENAME $DESTDIR ; fi
+  done
+}
+
+function move {
+  for FILENAME in `find $WORKDIR -maxdepth 1 -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
+    scan $FILENAME
+    if [ $FACTOR = true ] && [ $INVERT = false ] ; then mv $FILENAME $DESTDIR ; fi
+  done
+}
+
+function print {
+  for FILENAME in `find $WORKDIR -maxdepth 1 -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
+        
+    scan
+
+#   echo back in print $FACTOR $INVERT
+    # Вывод файлов в обычном режиме
+    if [ $FACTOR = true ] && [ $INVERT = false ] ; then
+      if [ $LONG = true ] ; then
+        echo `realpath $FILENAME` $SCORE # -l задана, поэтому добираем имя файла до полного
+      else
+        echo ${FILENAME##*/} # -l не задана, значит, наоборот, выводим имя файла без пути
+      fi
+    
+    # Вывод файлов в инвертированном режиме
+    elif [ $FACTOR = false ] && [ $INVERT = true ] ; then
+      if [ $LONG = true ] ; then
+        echo `realpath $FILENAME` "0.00"
+      else
+        echo ${FILENAME##*/}
+      fi
+    fi
+  done
+}
+
+function usage {
     echo "Usage:"
     echo "  ncheck [ { -c | -m } DESTINATION ] [ -i ] [ -k ] [ -l ] [ -p ] [ -R ] [ -v ] [ DIRECTORY ]\n"
     echo "Description:"
-    echo "No arguments : Just print filenames, like 'ls' does, but the utility will only show names of files with NSFW content"
-    echo "If DIRECTORY is given, then perform check in it."    
+    echo "No arguments   : Just print filenames, like 'ls' does, but the utility will only show names of files with NSFW content"
+    echo "If DIRECTORY is given, then perform check in it.\n"    
     echo "-c DESTINATION : Copy files into DESTINATION. Incompatible with -R and -m."
-    echo "-i : Invert the results. Show files without NSFW content."    
-    echo "-k : Reserved"
-    echo "-l : Long, informative output. Print "score" of the content."
+    echo "-i             : Invert the results. Show files without NSFW content."    
+    echo "-k             : Reserved"
+    echo "-l             : Long, informative output. Print "score" of the content."
     echo "-m DESTINATION : Move files into the DESTINATION directory"
-    echo "-p : Permissive mode. Allow 16+ erotic content. Use with caution."
-    echo "-R : Remove files. No additional confirmations will be asked. Use with caution. Incompatible with -m and -c."
-    echo "-r : Scan recursively. By default the utility only perform checks in current directory"
-    echo "-u or -h : Print this text, then exit"
-    echo "-v : Print version and exit" 
+    echo "-p             : Permissive mode. Allow 16+ erotic content. Use with caution."
+    echo "-R             : Remove files. No additional confirmations will be asked. Use with caution. Incompatible with -m and -c."
+    echo "-r             : Scan recursively. By default the utility only perform checks in current directory"
+    echo "-u or -h       : Print this text, then exit"
+    echo "-v             : Print version and exit" 
     echo "Examples:\n"
     echo ""
     echo "ncheck"
@@ -51,75 +107,42 @@ version() {
   exit -1
 }
 
+# ------------------- РАЗБОР АРГУМЕНТОВ И РАЗЛИЧНЫЕ ПРОВЕРКИ ----------------------
+
 # Решил пренебречь наличием длинных опций типа --copy-to в пользу упрощения скрипта.
 # Испольную встроенную команду getopts вместо внешней утилиты GNU getopt
+# На самом деле, с помощью getopts можно и в длинные аргументы, но это путь
+#                          на тёмную сторону
 
-while getopts c:ihklm:pRruv option
+while getopts c:ihklm:pRruVv option
 do
    case "${option}"  in  
-                c) DESTDIR=${OPTARG} && C_IS_SET=true ;;
-                h) usage ;;
-                i) INVERT=true ;;
-                k) echo "Notice: option -k is under development now" ;;
-                l) VERBOSE=true;;
-                m) DESTDIR=${OPTARG} && M_IS_SET=true ;;
-                p) PERMISSIVE=true;;
-                R) echo "Notice: option -R is under development now" ;;
-#                r) RECURSE='' ;;
-                u) usage ;;
-                v) version ;;
-                *) echo "Invalid option: $option" >&2 && exit 1 ;;
+               c ) [ $ACTION = print ] && { ACTION=copy ; DESTDIR=${OPTARG} ; } || { echo "Wrong arguments" ; exit 1 ; } ;;
+           h | u ) usage ;;
+               i ) INVERT=true ;;
+               l ) LONG=true ;;
+               m ) [ $ACTION = print ] && { ACTION=move ; DESTDIR=${OPTARG} ; } || { echo "Wrong arguments" ; exit 1 ; } ;;
+               p ) PERMISSIVE=true ;;
+               R ) echo "Notice: option -R is under development now" ;;
+               V ) version ;;
+               v ) VERBOSE=echo ;;
+               * ) echo "Invalid option: $option" >&2 && exit 1 ;;
    esac
 done
 
-# Теперь нужно провести еще 4 проверки. Сначала на совместимость опций
-if [ $C_IS_SET = true ] && [ $M_IS_SET = true ] ; then
-  echo "-c and -m options cannot be used at the same time! Exiting."
-  exit 1
-fi
+# Остались 2 финальные проверки, которые нужны исключительно для нормальной поддержки синтаксиса вида
+#     ncheck -c куда_копировать исходная_директория 
+#     ncheck -m куда_перемещать исходная_директория
+#     ncheck -c куда_перемещать
 
-if [ $C_IS_SET = true ] && [ $R_IS_SET = true ] ; then
-  echo "-c and -r options cannot be used at the same time! Exiting."
-  exit 1
-fi
+if [ -d $argv[-1] ] && [ $ACTION = print ] ; then WORKDIR=$argv[-1] ; fi
 
-# А эти два условия нужны для того, чтобы нормально обрабатывать синтаксис вида ncheck /target/dir
-# ncheck -c /copy_to_dir /scandir, то-есть, чтобы целевую директорию можно было по-прежнему указывать
-# без дополнительного параметра, и скрипт не путал её с аргументами к -c и -m
-if [ -d $argv[-1] ] && ! ( [ $C_IS_SET = true ] || [ $M_IS_SET = true ] ) ; then WORKDIR=$argv[-1] ; fi
 # Возможен случай, когда включено -m или -c, но тогда предпоследним аргументом тоже должна быть директория
-if [ -d $argv[-1] ] && ( [ $C_IS_SET = true ] || [ $M_IS_SET = true ] ) && [ -d $argv[-2] ] ; then WORKDIR=$argv[-1] ; fi
-
-print() {
-  for FILENAME in `find $WORKDIR -maxdepth 1 -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
-    
-    # Получаем JSON от сервиса
-    CURRENT_RESULT=`curl -s --request POST --url https://nsfw-images-detection-and-classification.p.rapidapi.com/adult-content-file \
-      --header "X-RapidAPI-Host: nsfw-images-detection-and-classification.p.rapidapi.com"  \
-      --header "X-RapidAPI-Key: $KEY" \
-      -F "image=@$FILENAME"`
-    
-    # Забираем из него нужные данные
-    FACTOR=`echo $CURRENT_RESULT | jq '.unsafe'`
-    SCORE=`echo $CURRENT_RESULT | jq '.objects[0].score'`
-
-    # Вывод файлов в обычном режиме
-    if [ $FACTOR = true ] && [ $INVERT = false ] ; then
-      if [ $VERBOSE = true ] ; then
-        echo `realpath $FILENAME` $SCORE # -l задана, поэтому добираем имя файла до полного
-      else
-        echo ${FILENAME##*/} # -l не задана, значит, наоборот, выводим имя файла без пути
-      fi
-    # Вывод файлов в инвертированном режиме
-    elif [ $FACTOR = false ] && [ $INVERT = true ] ; then
-      if [ $VERBOSE = true ] ; then
-        echo `realpath $FILENAME` "0.00"
-      else
-        echo ${FILENAME##*/}
-      fi
-    fi
-  done
-}
+if [ -d $argv[-1] ] && ( [ $ACTION = copy ] || [ $ACTION = move ] ) && [ -d $argv[-2] ] ; then WORKDIR=$argv[-1] ; fi
 
 # Ради чего всё затевалось
-print
+case $ACTION in
+  print ) print ;;
+   copy ) copy ;;
+   move ) move ;;
+esac
