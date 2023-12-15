@@ -8,6 +8,9 @@
 ###                                                                              ###
 ####################################################################################
 
+# ---------- СТРОГИЙ РЕЖИМ ----------
+# setopt -euo pipefail
+
 # --------------------------------- ПЕРЕМЕННЫЕ -------------------------------------
 KEY=`cat ~/.config/ncheck.key`
 WORKDIR=$PWD
@@ -18,29 +21,30 @@ VERBOSE=":"
 LONG=false
 ACTION=print
 
-declare FACTOR # Приходится делать это здесь чтобы потом не декларировать их
-declare SCORE  # по 10 раз в цикле. Кроме того, они должны быть глобальными
+declare FACTOR # Является ли картинка NSFW или нет. Принимает значение true и false. Должна быть глобальной
+declare SCORE  # Насколько картинка "плохая". Приходит float значение от сервиса. Должна быть глобальной
 
-# ---------------------------------- ФУНКЦИИ ----------------------------------------
+# ---------- ФУНКЦИИ ----------
 
+# Функция отправляет один файл сервису, получает JSON, забирает из него 2 значения
 function scan {
-#  echo we see $FILENAME in scan function
-#  echo got $1 from print() function
-  # Получаем JSON от сервиса
   CURRENT_RESULT=`curl -s --request POST --url https://nsfw-images-detection-and-classification.p.rapidapi.com/adult-content-file \
     --header "X-RapidAPI-Host: nsfw-images-detection-and-classification.p.rapidapi.com"  \
     --header "X-RapidAPI-Key: $KEY" \
     -F "image=@$FILENAME"`
 
-#  echo $CURRENT_RESILT
+  # TODO: Добавить проверку кода выхода curl, если он не отработал, выйти с кодом 1
 
-  # Забираем из него нужные данные
   FACTOR=`echo $CURRENT_RESULT | jq '.unsafe'`
   SCORE=`echo $CURRENT_RESULT | jq '.objects[0].score'`
   
-#  echo FACTOR $FACTOR SCORE $SCORE
+  $VERBOSE FACTOR $FACTOR, SCORE $SCORE, FILENAME $FILENAME
+
+  return 0
 }
 
+# Копирование файлов
+# TODO: проверить что происходит если INVERT = true
 function copy {
   for FILENAME in `find $WORKDIR -maxdepth 1 -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
     scan $FILENAME
@@ -48,6 +52,8 @@ function copy {
   done
 }
 
+# Перемещение файлов
+# TODO: проверить что происходит если INVERT = true
 function move {
   for FILENAME in `find $WORKDIR -maxdepth 1 -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
     scan $FILENAME
@@ -57,14 +63,12 @@ function move {
 
 function print {
   for FILENAME in `find $WORKDIR -maxdepth 1 -type f -exec file {} \; | grep -i 'image' | cut -d: -f1` ; do
-        
     scan
 
-#   echo back in print $FACTOR $INVERT
     # Вывод файлов в обычном режиме
     if [ $FACTOR = true ] && [ $INVERT = false ] ; then
       if [ $LONG = true ] ; then
-        echo `realpath $FILENAME` $SCORE # -l задана, поэтому добираем имя файла до полного
+        echo $SCORE `realpath $FILENAME` # -l задана, поэтому добираем имя файла до полного
       else
         echo ${FILENAME##*/} # -l не задана, значит, наоборот, выводим имя файла без пути
       fi
@@ -114,9 +118,9 @@ version() {
 # На самом деле, с помощью getopts можно и в длинные аргументы, но это путь
 #                          на тёмную сторону
 
-while getopts c:ihklm:pRruVv option
+while getopts c:ihklm:pRruVv OPTION
 do
-   case "${option}"  in  
+   case $OPTION in
                c ) [ $ACTION = print ] && { ACTION=copy ; DESTDIR=${OPTARG} ; } || { echo "Wrong arguments" ; exit 1 ; } ;;
            h | u ) usage ;;
                i ) INVERT=true ;;
@@ -141,8 +145,15 @@ if [ -d $argv[-1] ] && [ $ACTION = print ] ; then WORKDIR=$argv[-1] ; fi
 if [ -d $argv[-1] ] && ( [ $ACTION = copy ] || [ $ACTION = move ] ) && [ -d $argv[-2] ] ; then WORKDIR=$argv[-1] ; fi
 
 # Ради чего всё затевалось
-case $ACTION in
-  print ) print ;;
-   copy ) copy ;;
-   move ) move ;;
-esac
+function main {
+  case $ACTION in
+    print ) print ;;
+     copy ) copy ;;
+     move ) move ;;
+  esac
+
+  return 0
+}
+
+main
+
